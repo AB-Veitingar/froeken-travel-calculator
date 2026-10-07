@@ -7,7 +7,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, sans-serif; background: #fff; }
@@ -20,13 +19,11 @@
 <script type="text/babel">
 const { useState, useEffect } = React;
 
-// ─── PASTE YOUR GOOGLE SHEET URLS HERE WHEN READY ───────────────────────────
- const SHEET_CONFIG = {
-  menus:    "https://docs.google.com/spreadsheets/d/1y9sIDiTFEsQxBd1C_pR4-vZ62A-0ZoFFUWQJJOsi5I0/gviz/tq?tqx=out:csv&sheet=menus",
-  extras:   "https://docs.google.com/spreadsheets/d/1y9sIDiTFEsQxBd1C_pR4-vZ62A-0ZoFFUWQJJOsi5I0/gviz/tq?tqx=out:csv&sheet=extras",
-  settings: "https://docs.google.com/spreadsheets/d/1y9sIDiTFEsQxBd1C_pR4-vZ62A-0ZoFFUWQJJOsi5I0/gviz/tq?tqx=out:csv&sheet=settings",
-};
-// ─────────────────────────────────────────────────────────────────────────────
+// Prices, extras and group rules come from the master Sheet ("Travel menus",
+// "Travel extras", "Travel settings" tabs in the Catering Quotes Log), served by
+// its Apps Script. The same source feeds the Travel agency tab in the catering
+// calculator, so both always agree. The lists below are only a fallback.
+const MASTER_API = "https://script.google.com/macros/s/AKfycbzYmnzr9lgCRQ27pJTSpr-Vr62DNQ5iRh2mwZW-2jrNYSZAWGDNxEhAZjOxfMtVnZIQ/exec?action=travelConfig";
 
 const APPETIZERS = [
   {id:"salmon",  label:"Hot smoked salmon on Icelandic flatbread"},
@@ -85,14 +82,9 @@ const tdS = (r,b) => ({padding:"8px 10px",fontSize:b?14:13,fontWeight:b?800:400,
 const LBL = ({t}) => React.createElement("div",{style:{fontSize:12,color:"#6b7280",marginBottom:3}},t);
 const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
-async function fetchSheet(url){
-  if(!url)return null;
-  try{const r=await fetch(url);if(!r.ok)return null;const d=Papa.parse(await r.text(),{header:true,skipEmptyLines:true,dynamicTyping:true});return d.data;}
-  catch{return null;}
-}
 const parseMenus=rows=>rows.filter(r=>String(r.active).toUpperCase()!=="FALSE").map(r=>({id:String(r.id||"").trim(),category:String(r.category||"").trim(),label:String(r.label||"").trim(),price:parseFloat(r.price)||0,desc:String(r.desc||"").trim()}));
 const parseExtras=rows=>rows.filter(r=>String(r.active).toUpperCase()!=="FALSE").map(r=>({id:String(r.id||"").trim(),type:String(r.type||"").trim(),label:String(r.label||"").trim(),price:parseFloat(r.price)||0,note:String(r.note||"").trim()}));
-const parseSettings=rows=>{const s={...FALLBACK_SETTINGS};rows.forEach(r=>{if(r.key&&r.value!==undefined)s[String(r.key).trim()]=parseFloat(r.value);});return s;};
+const parseSettings=obj=>{const s={...FALLBACK_SETTINGS};Object.keys(obj||{}).forEach(k=>{const v=parseFloat(obj[k]);if(!isNaN(v))s[k]=v;});return s;};
 const getDiscount=(date,s)=>{if(!date)return null;const d=new Date(date+"T12:00:00").getDay();return d===5||d===6?{rate:s.discount_weekend,label:"Friday/Saturday",color:"#d97706"}:{rate:s.discount_weekday,label:"Sun–Thursday",color:"#16a34a"};};
 const freeMeals=(n,s)=>{if(n<s.free_meal_min_guests)return 0;if(n<s.free_meal_next_threshold)return s.free_meal_base;return s.free_meal_next_base+Math.floor((n-s.free_meal_next_threshold)/s.free_meal_increment);};
 const mkCourse=()=>({d1CourseType:"appetiser",salmon:0,reindeer:0,soup:0,veganApp:0,steak:0,char:0,veganMain:0,cake:0,veganDessert:0});
@@ -150,15 +142,14 @@ function App(){
   const[upgEnabled,setUpgEnabled]=useState(false);
 
   useEffect(()=>{
-    const has=SHEET_CONFIG.menus||SHEET_CONFIG.extras||SHEET_CONFIG.settings;
-    if(!has)return;
-    Promise.all([fetchSheet(SHEET_CONFIG.menus),fetchSheet(SHEET_CONFIG.extras),fetchSheet(SHEET_CONFIG.settings)]).then(([m,e,s])=>{
+    fetch(MASTER_API).then(r=>r.ok?r.json():null).then(d=>{
+      if(!d||!d.ok)return;
       let live=false;
-      if(m&&m.length){setMenus(parseMenus(m));live=true;}
-      if(e&&e.length){setExtras(parseExtras(e));live=true;}
-      if(s&&s.length){setSettings(parseSettings(s));live=true;}
+      if(d.menus&&d.menus.length){setMenus(parseMenus(d.menus));live=true;}
+      if(d.extras&&d.extras.length){setExtras(parseExtras(d.extras));live=true;}
+      if(d.settings&&Object.keys(d.settings).length){setSettings(parseSettings(d.settings));live=true;}
       setDataSource(live?"live":"fallback");
-    });
+    }).catch(()=>{});
   },[]);
 
   const dinnerMenus=menus.filter(m=>m.category==="dinner");
@@ -361,7 +352,7 @@ ${notes?`<h2>Notes</h2><p>${notes}</p>`:""}
           <div style={{fontWeight:600,color:"#374151"}}>Selfoss, Iceland</div>
           <div style={{color:"#d97706"}}>🏆 #1 TripAdvisor South Iceland 2024 & 2025</div>
           <div style={{fontSize:11,color:dataSource==="live"?"#166534":"#9ca3af",marginTop:4}}>
-            {dataSource==="live"?"✓ Live prices from Google Sheets":"📋 Built-in prices"}
+            {dataSource==="live"?"✓ Live prices":"📋 Built-in prices"}
           </div>
         </div>
       </div>
